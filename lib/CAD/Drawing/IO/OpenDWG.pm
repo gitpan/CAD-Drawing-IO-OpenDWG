@@ -1,7 +1,7 @@
 package CAD::Drawing::IO::OpenDWG;
-our $VERSION = '0.21';
+our $VERSION = '0.22';
 
-use CAD::Drawing;
+#use CAD::Drawing; # circular requirements?
 use CAD::Drawing::Defined;
 use CAD::Drawing::IO::DWGI;
 
@@ -28,13 +28,14 @@ CAD::Drawing::IO::OpenDWG - Accessor methods for OpenDWG toolkit wrapper
 
 =head1 AUTHOR
 
-  Eric L. Wilhelm
-  ewilhelm at sbcglobal dot net
-  http://pages.sbcglobal.net/mycroft
+Eric L. Wilhelm <ewilhelm at cpan dot org>
+
+http://scratchcomputing.com
 
 =head1 COPYRIGHT
 
-This module is copyright (C) 2003 by Eric L. Wilhelm and A. Zahner Co.
+This module is copyright (C) 2004-2006 by Eric L. Wilhelm.  Portions
+copyright (C) 2003 by Eric L. Wilhelm and A. Zahner Co.
 
 =head1 LICENSE
 
@@ -50,9 +51,9 @@ You may use this software under one of the following licenses:
 
 =head1 NO WARRANTY
 
-This software is distributed with ABSOLUTELY NO WARRANTY.  The author
-and his employer will in no way be held liable for any loss or damages
-resulting from its use.
+This software is distributed with ABSOLUTELY NO WARRANTY.  The author,
+his former employer, and any other contributors will in no way be held
+liable for any loss or damages resulting from its use.
 
 =head1 Modifications
 
@@ -68,31 +69,23 @@ notification of any intended changes or extensions would be most helpful
 in avoiding repeated work for all parties involved.  Please contact the
 author with any such development plans.
 
-
 =head1 SEE ALSO
 
   CAD::Drawing
   CAD::Drawing::IO
   CAD::Drawing::IO::DWGI
 
-=head1 Changes
-
-  0.20 First public release
-  0.21 Plug-in updates
-
 =cut
 ########################################################################
 
-=head1 Requisite Plug-in Functions
-
-See CAD::Drawing::IO for a description of the plug-in architecture.
-
-=cut
-########################################################################
 # the following are required to be a disc I/O plugin:
 our $can_save_type = "dwg";
 our $can_load_type = $can_save_type;
 our $is_inherited = 1;
+
+=head1 Requisite Plug-in Functions
+
+See CAD::Drawing::IO for a description of the plug-in architecture.
 
 =head2 check_type
 
@@ -103,11 +96,17 @@ sub check_type {
 	my ($filename, $type) = @_;
 	my ($t, $v) = dwgtype($type);
 	(defined($t) && defined($v)) && return($type);
+	# print "passed that\n";
 	my $extension;
 	if($filename =~ m/.*\.(\w+)$/) {
 		$extension = $1;
 	}
-	$extension ||= $type;
+	if(defined($type)) {
+		$extension = $type;
+	}
+	else {
+		$extension ||= $type;
+	}
 	$extension = lc($extension);
 	my %change = (
 		dwg => "dwg2000",
@@ -121,8 +120,6 @@ sub check_type {
 
 These are called directly from CAD::Drawing::IO
 
-=cut
-########################################################################
 =head2 load
 
   $drw->load($filename, \%options);
@@ -139,9 +136,12 @@ sub load {
 	$dwg->loadfile($filename);
 	$dwg->getentinit(); # starts up the objecthandles
 	my($s, $n) = check_select($opt);
+	my $count = 0;
 	while(my($layer, $color, $type) = $dwg->getent()) {
 		$s->{l} && ($s->{l}{$layer} || next);
 		$n->{l} && ($n->{l}{$layer} && next);
+		# FIXME: color is only 0-256 in the world of autodesk, should
+		#        quit using it here
 		$s->{c} && ($s->{c}{$color} || next);
 		$n->{c} && ($n->{c}{$color} && next);
 		$type = $dwg->entype($type);
@@ -175,6 +175,7 @@ sub load {
 		elsif($type eq "texts") {
 			my $tx = $dwg->getText();
 			$pass{height} = $tx->{height};
+			$tx->{angle} and ($pass{angle} = $tx->{angle});
 			$addr = $self->addtext($tx->{pt}, $tx->{string}, \%pass);
 		}
 		elsif($type eq "points") {
@@ -206,12 +207,13 @@ sub load {
 			# here and put it in the wcs (but I might be insane.)
 			$self->to_wcs($addr);
 		}
-
+		$count++;
 		# FIXME: are we pushing the $addr to a list?
 
 	} # end while getent()
-	# need to return all of the loaded addrs?
-
+	# XXX need to return all of the loaded addrs?
+	# sure, but at least return true for now!
+	return($count);
 } # end subroutine load definition
 ########################################################################
 
@@ -228,8 +230,13 @@ sub save {
 	##print "saving to $filename\n";
 	my $type = $opts->{type};
 	my($filetype, $version) = dwgtype($type);
-	(defined($filetype) && defined($version)) || 
-		croak("couldn't get DWG type and version for $type\n");
+	unless(defined($filetype) && defined($version)) { 
+		# print "trying type again\n";
+		$type = check_type($filename, $type);
+		$type or croak("couldn't get DWG type and version for $type\n");
+		($filetype, $version) = dwgtype($type);
+		# print "using type $filetype and version $version\n";
+	}
 	
 	my $dwg = CAD::Drawing::IO::DWGI->new();
 	$dwg->newfile($version);
@@ -341,7 +348,6 @@ sub save {
 					# FIXME: I sure do not like this:
 					$self->to_ocs(\%addr);
 					my $obj = $self->getobj(\%addr);
-					$obj->{rad} *= 1.0; # must make a double
 					$dwg->writeCircle($obj);
 					$self->to_wcs(\%addr);
 					$kok && $self->remove(\%addr);
@@ -355,7 +361,6 @@ sub save {
 						"id"    => $id,
 						);
 					my $obj = $self->getobj(\%addr);
-					$obj->{rad} *= 1.0; # must make a double
 					$dwg->writeArc($obj);
 					$kok && $self->remove(\%addr);
 					}
